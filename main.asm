@@ -9,6 +9,8 @@ section .bss
   server_socket_fd resq 1   ; reserves 4 bytes same as int in c 
   client_socket_fd resq 1
 
+
+
   server_addr resb sockaddr_in_size
 
 section .data
@@ -22,6 +24,12 @@ section .data
   SYS_BIND equ 49
   SYS_LISTEN equ 50
   SYS_ACCEPT equ 43
+  SYS_WRITE equ 1
+  SYS_READ equ 0
+  SYS_CLOSE equ 3
+
+  msg db "Hello, world!", 0x0a
+  len equ $ - msg
 
 section .text
   global _start
@@ -72,6 +80,29 @@ _start:
 
   mov [client_socket_fd], rax
 
+  ; write syscall 
+  mov rax, SYS_WRITE
+  mov rdi, [client_socket_fd]
+  mov rsi, msg
+  mov rdx, len
+  syscall
+
+  ; close syscall
+  mov rax, SYS_CLOSE
+  mov rdi, [client_socket_fd]
+  syscall
+
+  mov rax, 60                 ; Syscall number for 'exit' (60 on x86-64 Linux)
+  mov rdi, 0                  ; Exit status code (0 for success)
+  syscall   
 
 socket_error:
+  ; close syscall
+  mov rax, SYS_CLOSE
+  mov rdi, [server_socket_fd]
+  syscall
+  
+  mov rax, 60                 ; Syscall number for 'exit' (60 on x86-64 Linux)
+  mov rdi, 0                  ; Exit status code (0 for success)
+  syscall   
   ; exit the process gracefully and close the socket
