@@ -41,7 +41,7 @@ Use the **NASM assembler** and **ld linker** to compile the project:
 
 ```bash
 # Assemble the source code into an object file
-nasm -f elf64 main.asm -o main.o
+nasm -f elf64 src/main.asm -o main.o
 
 # Link the object file to create the executable
 ld main.o -o main
