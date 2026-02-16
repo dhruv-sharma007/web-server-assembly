@@ -91,6 +91,32 @@ section .data
 
   sigint_msg db "Caught SIGINT! Exiting cleanly.", 10
   sigint_msg_len equ $ - sigint_msg
+
+  ; ------- Response Data -----------
+
+response:
+    db "HTTP/1.1 200 OK", 13, 10
+    db "Content-Type: text/html; charset=UTF-8", 13, 10
+    db "Content-Length: 157", 13, 10
+    db "Server: Assembly Server", 13, 10
+    db "Accept-Ranges: bytes", 13, 10
+    db "Connection: close", 13, 10
+    db 13, 10
+
+response_header_len equ $ - response
+
+body:
+    db "<html>", 13, 10
+    db "  <head>", 13, 10
+    db "    <title>An Example Page</title>", 13, 10
+    db "  </head>", 13, 10
+    db "  <body>", 13, 10
+    db "    <p>Hello World, serving from assembly web server !!!</p>", 13, 10
+    db "  </body>", 13, 10
+    db "</html>", 13, 10
+
+body_len equ $ - body
+
   
 section .text
   global _start
@@ -156,11 +182,14 @@ accept_loop:
 
   mov [client_socket_fd], rax
   
+  ; read data from client and print to stdout
   read [client_socket_fd], client_buffer, CLIENT_BUFFER_SIZE
-
   print client_buffer, CLIENT_BUFFER_SIZE
 
-  write [client_socket_fd], msg, msg_len
+
+
+  write [client_socket_fd], response,response_header_len
+  write [client_socket_fd], body, body_len
   close [client_socket_fd]
   
   jmp accept_loop
