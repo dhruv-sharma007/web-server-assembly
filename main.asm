@@ -1,3 +1,4 @@
+; using struc provided by nasm works as like struct
 struc sockaddr_in
     .sin_family resw 1   ; 2 bytes
     .sin_port   resw 1   ; 2 bytes
@@ -5,17 +6,67 @@ struc sockaddr_in
     .sin_zero   resb 8   ; 8 bytes padding
 endstruc
 
+struc sigaction
+  .sa_handler   resq 1
+  .sa_flags     resq 1
+  .sa_restorer  resq 1
+  .sa_mask      resq 2
+endstruc
+
+
+%macro print 2
+  mov rax, SYS_WRITE
+  mov rdi, 1
+  mov rsi, %1 
+  mov rdx, %2
+  syscall
+%endmacro
+
+%macro write 3
+  mov rax, SYS_WRITE
+  mov rdi, %1 ; fd
+  mov rsi, %2 ; message
+  mov rdx, %3 ; msg_len of message
+  syscall
+%endmacro
+
+%macro read 3
+  mov rax, SYS_READ
+  mov rdi, %1 ; fd
+  mov rsi, %2 ; buffer pointer
+  mov rdx, %3 ; size
+  syscall
+%endmacro
+
+%macro close 1
+  mov rax, SYS_CLOSE
+  mov rdi, %1 
+  syscall
+%endmacro
+
+%macro exit 1
+  mov rax, SYS_EXIT
+  mov rdi, %1
+  syscall
+%endmacro
+
+%macro accept 1
+  mov rax, SYS_ACCEPT
+  mov rdi, %1
+  xor rsi, rsi 
+  xor rdx, rdx
+  syscall
+%endmacro
+
 section .bss
-  server_socket_fd resq 1   ; reserves 4 bytes same as int in c 
+  server_socket_fd resq 1
   client_socket_fd resq 1
-
-
-
   server_addr resb sockaddr_in_size
+  client_buffer resb CLIENT_BUFFER_SIZE
+  sa resb sigaction_size
 
 section .data
 
-  ; arguments for socket syscall
   PORT equ 8080
   AF_INET equ 2
   SOCK_STREAM equ 1
@@ -27,82 +78,101 @@ section .data
   SYS_WRITE equ 1
   SYS_READ equ 0
   SYS_CLOSE equ 3
+  SYS_EXIT equ 60
+  SYS_RT_SIGACTION equ 13
 
-  msg db "Hello, world!", 0x0a
-  len equ $ - msg
+  CLIENT_BUFFER_SIZE equ 2048
 
+  err_msg db "socket error", 0x0a
+  err_msg_len equ $ - err_msg
+
+  msg db "Assembly Server running on http://127.0.0.1:8080 !", 0x0a
+  msg_len equ $ - msg
+
+  sigint_msg db "Caught SIGINT! Exiting cleanly.", 10
+  sigint_msg_len equ $ - sigint_msg
+  
 section .text
   global _start
 
 _start:   
-  mov rax, SYS_SOCKET         ; 41 is socket syscall index number
+  mov rax, SYS_SOCKET
   mov rdi, AF_INET
   mov rsi, SOCK_STREAM
   mov rdx, 0
   syscall
 
-  test rax, rax      ; set flags based on rax
-  js  socket_error   ; jump if rax < 0 (SF = 1) | jump if sign flag is true
+  test rax, rax
+  js  socket_error
 
-  mov [server_socket_fd], rax  ; store server fd in memory
+  mov [server_socket_fd], rax
 
-  ; add data in addr, addr is just contigues data structure treated as struct here
-  mov word  [server_addr + sockaddr_in.sin_family], AF_INET   ;  AF_INET
-  mov word  [server_addr + sockaddr_in.sin_port], 0x901F  ; port 8080
-  mov dword  [server_addr + sockaddr_in.sin_addr], 0
+  mov ax, 8080
+  xchg al, ah
+  mov word  [server_addr + sockaddr_in.sin_family], AF_INET
+  mov word  [server_addr + sockaddr_in.sin_port], ax
+  mov dword [server_addr + sockaddr_in.sin_addr], 0
 
-  ; bind syscall
-  mov rax, SYS_BIND    ; 49 is bind syscall index
-  mov rdi, [server_socket_fd]    ; pass the server fd
-  lea rsi, [server_addr]                ; pass the socket address for bind
+  mov rax, SYS_BIND
+  mov rdi, [server_socket_fd]
+  lea rsi, [server_addr]
   mov rdx, sockaddr_in_size
   syscall 
 
   test rax, rax
   js   socket_error
 
-  mov rax, SYS_LISTEN           ; now we will listen for clients to connect | 50 listen syscall index number
+  mov rax, SYS_LISTEN
   mov rdi, [server_socket_fd]
-  mov rsi, 20                   ; backlog handling in queue
+  mov rsi, 20
   syscall
 
   test rax, rax
   js   socket_error
 
-  mov rax, SYS_ACCEPT    ; add looping here to handle connection again and again
-  mov rdi, [server_socket_fd]
-  mov rsi, rsi
-  mov rdx, rdx
+  print msg, msg_len
+
+  ; -----  SIGNAL HANDLING -----
+  lea rdi, [sa]
+  mov rcx, sigaction_size
+  xor rax, rax
+  rep stosb
+
+  mov qword [sa + sigaction.sa_handler], sigint_handler
+
+  mov rax, SYS_RT_SIGACTION
+  mov rdi, 2          ; SIGINT
+  lea rsi, [sa]
+  xor rdx, rdx        ; oldact = NULL
+  mov r10, 8          ; sigsetsize
   syscall
+  ; ---------------------------------
+
+accept_loop:
+  accept [server_socket_fd]
 
   test rax, rax
   js   socket_error
 
   mov [client_socket_fd], rax
+  
+  read [client_socket_fd], client_buffer, CLIENT_BUFFER_SIZE
 
-  ; write syscall 
-  mov rax, SYS_WRITE
-  mov rdi, [client_socket_fd]
-  mov rsi, msg
-  mov rdx, len
-  syscall
+  print client_buffer, CLIENT_BUFFER_SIZE
 
-  ; close syscall
-  mov rax, SYS_CLOSE
-  mov rdi, [client_socket_fd]
-  syscall
-
-  mov rax, 60                 ; Syscall number for 'exit' (60 on x86-64 Linux)
-  mov rdi, 0                  ; Exit status code (0 for success)
-  syscall   
+  write [client_socket_fd], msg, msg_len
+  close [client_socket_fd]
+  
+  jmp accept_loop
+  
+  exit 0
 
 socket_error:
-  ; close syscall
-  mov rax, SYS_CLOSE
-  mov rdi, [server_socket_fd]
-  syscall
-  
-  mov rax, 60                 ; Syscall number for 'exit' (60 on x86-64 Linux)
-  mov rdi, 0                  ; Exit status code (0 for success)
-  syscall   
-  ; exit the process gracefully and close the socket
+  close [server_socket_fd]
+  print err_msg, err_msg_len
+  exit 1
+
+sigint_handler:
+  close [server_socket_fd]
+  print sigint_msg, sigint_msg_len
+  exit 1
